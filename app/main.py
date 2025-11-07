@@ -2,8 +2,6 @@ from typing import Any, Iterable, Tuple
 
 from app.node import Node
 
-_TOMBSTONE = object()
-
 
 class Dictionary:
     def __init__(self) -> None:
@@ -45,12 +43,11 @@ class Dictionary:
         match option:
             case "new":
                 return (entry is not None
-                        and entry is not _TOMBSTONE
                         and entry.key != key)
             case "empty":
-                return entry is None or entry is _TOMBSTONE
+                return entry is None
             case "current":
-                return entry is not _TOMBSTONE and entry.key == key
+                return entry.key == key
             case _:
                 raise ValueError(f"Invalid slot option: {option}")
 
@@ -109,7 +106,7 @@ class Dictionary:
 
         while self.bucket[idx] is not None:
             if self.__verify_slot(idx, key, "current"):
-                self.bucket[idx] = _TOMBSTONE
+                self.bucket[idx] = [None]
                 self.size -= 1
                 return
             idx = (idx + 1) % self.capacity
@@ -170,32 +167,26 @@ class Dictionary:
         except KeyError:
             return default
 
-    def pop(self, index: int | None = None) -> Any:
+    def pop(self, key: Any) -> Any:
         """
     Remove and return a key-value pair by index or the last inserted element.
     Args:
-        index: The index of the key-value pair to remove.
-               If None, removes the last inserted element.
+        key: The key of the key-value pair to remove.
+               If None return None
     Returns:
         A tuple containing (key, value) of the removed element.
     Raises:
         KeyError: If the dictionary is empty.
-        IndexError: If the provided index is invalid.
     """
         if self.size == 0:
             raise KeyError("Dictionary is empty")
 
-        keys = list(self)
-        if index is None:
-            key = keys[-1]
+        if key:
+            value = self[key]
+            self.__delitem__(key)
+            return key, value
         else:
-            if index < 0 or index >= len(keys):
-                raise IndexError("Invalid index")
-            key = keys[index]
-
-        value = self[key]
-        del self[key]
-        return key, value
+            return None
 
     def update(self,
                updates: Iterable[Tuple[Any, Any]] | dict | tuple) -> None:
