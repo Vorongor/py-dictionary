@@ -1,172 +1,218 @@
 from typing import Any, Iterable, Tuple
 
+from app.node import Node
+
 _TOMBSTONE = object()
 
 
 class Dictionary:
     def __init__(self) -> None:
-        """
-        Initialize the dictionary with a default
-        capacity and prepare internal storage.
-        """
-        self.size = 8
-        self.current_size = 0
-        self.resize_point = round(self.size * (2 / 3))
-        self.bucket = [None] * self.size
+        """Initialize the dictionary with
+        default capacity and internal storage."""
+        self.capacity = 8
+        self.size = 0
+        self.koff = 2 / 3
+        self.threshold = round(self.capacity * self.koff)
+        self.bucket: list[Node | None] = [None] * self.capacity
 
     def __hash_index(self, key: Any) -> int:
         """
-        Compute the hash index for a given key based on current table size.
+    Compute the hash index for a given key based on the current table size.
+    Args:
+        key: The key to be hashed.
+    Returns:
+        The index position within the current hash table capacity.
+    """
+        return hash(key) % self.capacity
+
+    def __verify_slot(self, idx: int, key: Any, option: str) -> bool:
         """
-        return hash(key) % self.size
+    Check the status of a slot in the hash table depending on the operation.
+    Args:
+        idx: The current index in the hash table.
+        key: The key being searched or inserted.
+        option: The verification mode.
+            - "new": Checks if the slot is occupied by a different key.
+            - "empty": Checks if the slot is free or a tombstone.
+            - "current": Checks if the slot contains the target key.
+    Returns:
+        True if the condition for the given
+        option is satisfied, otherwise False.
+    Raises:
+        ValueError: If an invalid option is provided.
+    """
+        entry = self.bucket[idx]
+        match option:
+            case "new":
+                return (entry is not None
+                        and entry is not _TOMBSTONE
+                        and entry.key != key)
+            case "empty":
+                return entry is None or entry is _TOMBSTONE
+            case "current":
+                return entry is not _TOMBSTONE and entry.key == key
+            case _:
+                raise ValueError(f"Invalid slot option: {option}")
 
     def __setitem__(self, key: Any, value: Any) -> None:
         """
-        Insert or update a key-value pair in the dictionary.
-        Automatically resizes if load factor exceeds threshold.
-        """
+    Insert or update a key-value pair in the dictionary.
+    Args:
+        key: The key to insert or update.
+        value: The value to associate with the key.
+    Raises:
+        RuntimeError: If resizing or insertion fails unexpectedly.
+    """
         idx = self.__hash_index(key)
 
-        while (
-            self.bucket[idx] is not None
-            and self.bucket[idx] is not _TOMBSTONE
-            and self.bucket[idx][0] != key
-        ):
-            idx = (idx + 1) % self.size
+        while self.__verify_slot(idx, key, "new"):
+            idx = (idx + 1) % self.capacity
 
-        if self.bucket[idx] is None or self.bucket[idx] is _TOMBSTONE:
-            self.current_size += 1
+        if self.__verify_slot(idx, key, "empty"):
+            self.size += 1
 
-        self.bucket[idx] = (key, value)
+        self.bucket[idx] = Node(key, value)
 
-        if self.current_size > self.resize_point:
+        if self.size > self.threshold:
             self.__resize()
 
     def __getitem__(self, key: Any) -> Any:
         """
-        Retrieve the value associated with a given key.
-        Raises KeyError if the key is not found.
-        """
+    Retrieve the value associated with a given key.
+    Args:
+        key: The key to look up in the dictionary.
+    Returns:
+        The value associated with the key.
+    Raises:
+        KeyError: If the key does not exist in the dictionary.
+    """
         idx = self.__hash_index(key)
 
         while self.bucket[idx] is not None:
-            if (self.bucket[idx] is not _TOMBSTONE
-                    and self.bucket[idx][0] == key):
-                return self.bucket[idx][1]
-            idx = (idx + 1) % self.size
+            entry = self.bucket[idx]
+            if self.__verify_slot(idx, key, "current"):
+                return entry.value
+            idx = (idx + 1) % self.capacity
 
         raise KeyError(key)
 
     def __delitem__(self, key: Any) -> None:
         """
-        Remove a key-value pair from the dictionary.
-        Uses tombstone to preserve probing chain.
-        """
+    Remove a key-value pair from the dictionary
+    and mark its slot as a tombstone.
+    Args:
+        key: The key to remove.
+    Raises:
+        KeyError: If the key is not found.
+    """
         idx = self.__hash_index(key)
 
         while self.bucket[idx] is not None:
-            if (self.bucket[idx] is not _TOMBSTONE
-                    and self.bucket[idx][0] == key):
+            if self.__verify_slot(idx, key, "current"):
                 self.bucket[idx] = _TOMBSTONE
-                self.current_size -= 1
+                self.size -= 1
                 return
-            idx = (idx + 1) % self.size
+            idx = (idx + 1) % self.capacity
 
         raise KeyError(key)
 
     def __len__(self) -> int:
-        """
-        Return the number of active key-value pairs in the dictionary.
-        """
-        return self.current_size
+        """Return the number of active key-value pairs."""
+        return self.size
 
     def __iter__(self) -> Any:
-        """
-        Iterate over all keys in the dictionary.
-        """
+        """Iterate over keys."""
         for entry in self.bucket:
-            if entry and entry is not _TOMBSTONE:
-                yield entry[0]
+            if isinstance(entry, Node):
+                yield entry.key
 
     def items(self) -> Any:
-        """
-        Iterate over all key-value pairs in the dictionary.
-        """
+        """Iterate over (key, value) pairs."""
         for entry in self.bucket:
-            if entry and entry is not _TOMBSTONE:
-                yield entry
+            if isinstance(entry, Node):
+                yield (entry.key, entry.value)
 
     def values(self) -> Any:
-        """
-        Iterate over all values in the dictionary.
-        """
+        """Iterate over all values."""
         for entry in self.bucket:
-            if entry and entry is not _TOMBSTONE:
-                yield entry[1]
+            if isinstance(entry, Node):
+                yield entry.value
 
     def __resize(self) -> None:
-        """
-        Double the capacity of the dictionary and rehash all existing entries.
-        """
+        """Double capacity and rehash all nodes."""
         old_bucket = self.bucket
 
-        self.size *= 2
-        self.bucket = [None] * self.size
-        self.current_size = 0
-        self.resize_point = round(self.size * (2 / 3))
+        self.capacity *= 2
+        self.bucket = [None] * self.capacity
+        self.size = 0
+        self.threshold = round(self.capacity * (2 / 3))
 
         for entry in old_bucket:
-            if entry and entry is not _TOMBSTONE:
-                self.__setitem__(entry[0], entry[1])
+            if isinstance(entry, Node):
+                self.__setitem__(entry.key, entry.value)
 
     def clear(self) -> None:
-        """
-        Remove all entries from the dictionary and reset its state.
-        """
+        """Remove all entries."""
         self.__init__()
 
-    def get(self, name: Any, default: None = None) -> Any:
+    def get(self, key: Any, default: Any = None) -> Any:
         """
-        Return the value for a key if it exists, otherwise return the default.
-        """
+    Retrieve the value for a key if it exists,
+    otherwise return a default value.
+    Args:
+        key: The key to look up.
+        default: The value to return if the key is not found. Defaults to None.
+    Returns:
+        The value associated with the key, or the provided default.
+    """
         try:
-            return self.__getitem__(name)
+            return self[key]
         except KeyError:
             return default
 
     def pop(self, index: int | None = None) -> Any:
         """
-        Remove and return a key-value pair
-        by logical index or last inserted item.
-        """
-        if self.current_size == 0:
+    Remove and return a key-value pair by index or the last inserted element.
+    Args:
+        index: The index of the key-value pair to remove.
+               If None, removes the last inserted element.
+    Returns:
+        A tuple containing (key, value) of the removed element.
+    Raises:
+        KeyError: If the dictionary is empty.
+        IndexError: If the provided index is invalid.
+    """
+        if self.size == 0:
             raise KeyError("Dictionary is empty")
 
-        if index is not None:
-            keys = list(self.__iter__())
-            if index >= len(keys) or index < 0:
+        keys = list(self)
+        if index is None:
+            key = keys[-1]
+        else:
+            if index < 0 or index >= len(keys):
                 raise IndexError("Invalid index")
             key = keys[index]
-        else:
-            keys = list(self.__iter__())
-            key = keys[-1]
 
         value = self[key]
-        self.__delitem__(key)
+        del self[key]
         return key, value
 
     def update(self,
                updates: Iterable[Tuple[Any, Any]] | dict | tuple) -> None:
         """
-        Update the dictionary with key-value pairs
-        from another iterable, dict, or tuple.
-        """
+    Update the dictionary with key-value pairs
+    from another dictionary or iterable.
+    Args:
+        updates: A dictionary, an iterable of (key, value) pairs,
+                 or a single (key, value) tuple.
+    Raises:
+        TypeError: If updates is not a valid iterable or mapping type.
+    """
         if isinstance(updates, dict):
             updates = updates.items()
-
-        if (isinstance(updates, tuple) and len(updates) == 2
+        if (isinstance(updates, tuple)
+                and len(updates) == 2
                 and not isinstance(updates[0], tuple)):
             updates = [updates]
-
         for key, value in updates:
-            self.__setitem__(key, value)
+            self[key] = value
